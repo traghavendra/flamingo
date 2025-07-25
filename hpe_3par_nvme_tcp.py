@@ -1,8 +1,6 @@
 #    (c) Copyright 2025 Hewlett Packard Enterprise Development LP
 #    All Rights Reserved.
 #
-#    Copyright 2012 OpenStack Foundation
-#
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
 #    a copy of the License at
@@ -107,7 +105,7 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
             # Check whether host exists with same hostname
             # if found: use that host
             # else: create new host using nqn and domain
-            host = hpe3par_client.create_host_cinder(
+            host = hpe3par_client.create_host_nvme(
                 hostname, nqn=host_nqn, domain=domain)
 
             storage_system_id = common._client_conf['hpe3par_api_url']
@@ -133,3 +131,22 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
         finally:
             self._logout(common)
 
+    @volume_utils.trace
+    def terminate_connection(self, volume, connector, **kwargs):
+
+        LOG.debug("volume id: %(id)s", {'id': volume['id']})
+        common = self._login()
+
+        try:
+            LOG.debug("connector: %(conn)s", {'conn': connector})
+            
+            hpe3par_client = common.client
+
+            host_nqn = connector['nqn']
+            hostname = common._safe_hostname(connector, self.configuration)
+            vol_name_3par = common._get_3par_vol_name(volume)
+
+            hpe3par_client.remove_vlun_nvme(vol_name_3par, hostname, host_nqn)
+
+        finally:
+            self._logout(common)
