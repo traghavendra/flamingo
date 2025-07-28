@@ -143,7 +143,7 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
             hpe3par_client = common.client
 
             host_nqn = connector['nqn']
-            hostname = common._safe_hostname(connector, self.configuration)
+            hostname = connector['host']
             vol_name_3par = common._get_3par_vol_name(volume)
 
             hpe3par_client.remove_vlun_nvme(vol_name_3par, hostname, host_nqn)
