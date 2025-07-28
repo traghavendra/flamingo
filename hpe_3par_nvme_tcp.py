@@ -94,7 +94,7 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
 
         try:
             LOG.debug("connector: %(conn)s", {'conn': connector})
-            
+
             hpe3par_client = common.client
             host_nqn = connector['nqn']
 
@@ -139,7 +139,7 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
 
         try:
             LOG.debug("connector: %(conn)s", {'conn': connector})
-            
+
             hpe3par_client = common.client
 
             host_nqn = connector['nqn']
