@@ -96,20 +96,16 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
             LOG.debug("connector: %(conn)s", {'conn': connector})
             hpe3par_client = common.client
             host_nqn = connector['nqn']
-            hostname = common._safe_hostname(connector, self.configuration)
             cpg = common.get_cpg(volume, allowSnap=True)
             domain = common.get_domain(cpg)
 
-            # Check whether host exists with same hostname
-            # if found: use that host
-            # else: create new host using nqn and domain
-            #host = hpe3par_client.create_host_nvme(
-            #    hostname, nqn=host_nqn, domain=domain)
+            # pre-requisite: host should be already created on array
             hostname = connector['host']
-            host = hpe3par_client.get_host_by_name(hostname)
+            host = hpe3par_client.getHost(hostname)
             if not host:
-                LOG.error("Host not found, please create new host with nqn:"
-                          " %(nqn)s", {'nqn': host_nqn})
+                LOG.error("Host with name %(name)s not found. "
+                          "Please create new host with name %(name)s and "
+                          "nqn %(nqn)s", {'name': hostname, 'nqn': host_nqn})
                 raise hpeexceptions.HTTPNotFound(
                     "Host not found with name: %s" % hostname)
             storage_system_id = common._client_conf['hpe3par_api_url']
@@ -149,3 +145,4 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
 
         finally:
             self._logout(common)
+
