@@ -125,6 +125,9 @@ hpe3par_opts = [
     cfg.ListOpt('hpe3par_iscsi_ips',
                 default=[],
                 help="List of target iSCSI addresses to use."),
+    cfg.ListOpt('hpe3par_nvme_ips',
+                default=[],
+                help="List of target nvme addresses to use."),
     cfg.BoolOpt('hpe3par_iscsi_chap_enabled',
                 default=False,
                 help="Enable CHAP authentication for iSCSI connections."),
@@ -4441,6 +4444,8 @@ class HPE3PARCommon(object):
             self._client_conf['iscsi_ip_address'] = (
                 self.config.target_ip_address)
             self._client_conf['iscsi_port'] = self.config.target_port
+            self._client_conf['hpe3par_nvme_ips'] = (
+                self.config.hpe3par_nvme_ips)
 
     def _get_cpg_from_cpg_map(self, cpg_map, target_cpg):
         ret_target_cpg = None
