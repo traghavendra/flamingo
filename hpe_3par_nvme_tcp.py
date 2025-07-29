@@ -94,10 +94,8 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
 
         try:
             LOG.debug("connector: %(conn)s", {'conn': connector})
-
             hpe3par_client = common.client
             host_nqn = connector['nqn']
-
             hostname = common._safe_hostname(connector, self.configuration)
             cpg = common.get_cpg(volume, allowSnap=True)
             domain = common.get_domain(cpg)
@@ -105,20 +103,22 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
             # Check whether host exists with same hostname
             # if found: use that host
             # else: create new host using nqn and domain
-            host = hpe3par_client.create_host_nvme(
-                hostname, nqn=host_nqn, domain=domain)
-
+            #host = hpe3par_client.create_host_nvme(
+            #    hostname, nqn=host_nqn, domain=domain)
+            hostname = connector['host']
+            host = hpe3par_client.get_host_by_name(hostname)
+            if not host:
+                LOG.error("Host not found, please create new host with nqn:"
+                          " %(nqn)s", {'nqn': host_nqn})
+                raise hpeexceptions.HTTPNotFound(
+                    "Host not found with name: %s" % hostname)
             storage_system_id = common._client_conf['hpe3par_api_url']
             nvme_ips = self.nvme_ips[storage_system_id]
-            ready_ports = self.nvme_ports[storage_system_id]
-
-            multipath = connector.get('multipath')
-            # multipath = True
 
             vol_name_3par = common._get_3par_vol_name(volume)
 
             portals, target_nqns = hpe3par_client.create_vlun_nvme(
-                vol_name_3par, host, nvme_ips, ready_ports, multipath)
+                vol_name_3par, host, nvme_ips)
 
             info = {'driver_volume_type': 'nvmeof',
                     'data': {'portals': portals,
@@ -139,7 +139,6 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
 
         try:
             LOG.debug("connector: %(conn)s", {'conn': connector})
-
             hpe3par_client = common.client
 
             host_nqn = connector['nqn']
