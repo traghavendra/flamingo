@@ -73,19 +73,19 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
         # check if nvme_ips (read from cinder.conf) are present on array.
         nvme_ip_list, nvme_port_list = (
             hpe3par_client.get_matched_array_ips_and_ports(cinder_conf))
+        LOG.debug("nvme_ip_list: %(ip_list)s", {'ip_list': nvme_ip_list})
+        LOG.debug("nvme_port_list: %(ports)s", {'ports': nvme_port_list})
+
         storage_system_id = cinder_conf['hpe3par_api_url']
         self.nvme_ips[storage_system_id] = nvme_ip_list
         self.nvme_ports[storage_system_id] = nvme_port_list
-
-        LOG.debug("nvme_ip_list: %(ip_list)s", {'ip_list': nvme_ip_list})
-        LOG.debug("nvme_port_list: %(ports)s", {'ports': nvme_port_list})
 
     @volume_utils.trace
     def initialize_connection(self, volume, connector):
         """Assigns the volume to a server.
 
         Steps to export a volume on array:
-          * Create a host on the array with the target nqn
+          * Ensure that host is present on array
           * Create a VLUN with the volume we want to export.
 
         """
@@ -96,18 +96,17 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
             LOG.debug("connector: %(conn)s", {'conn': connector})
             hpe3par_client = common.client
             host_nqn = connector['nqn']
-            cpg = common.get_cpg(volume, allowSnap=True)
-            domain = common.get_domain(cpg)
 
             # pre-requisite: host should be already created on array
-            hostname = connector['host']
-            host = hpe3par_client.getHost(hostname)
+            host = hpe3par_client.getHostByNqn(host_nqn)
+            LOG.debug("host: %(host)s", {'host': host})
             if not host:
-                LOG.error("Host with name %(name)s not found. "
+                hostname = connector['host']
+                LOG.error("Host with nqn %(nqn)s not found. "
                           "Please create new host with name %(name)s and "
                           "nqn %(nqn)s", {'name': hostname, 'nqn': host_nqn})
                 raise hpeexceptions.HTTPNotFound(
-                    "Host not found with name: %s" % hostname)
+                    "Host not found with nqn: %s" % host_nqn)
             storage_system_id = common._client_conf['hpe3par_api_url']
             nvme_ips = self.nvme_ips[storage_system_id]
 
@@ -138,11 +137,11 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
             hpe3par_client = common.client
 
             host_nqn = connector['nqn']
-            hostname = connector['host']
             vol_name_3par = common._get_3par_vol_name(volume)
 
+            host = hpe3par_client.getHostByNqn(host_nqn)
+            hostname = host['name']
             hpe3par_client.remove_vlun_nvme(vol_name_3par, hostname, host_nqn)
 
         finally:
             self._logout(common)
-
