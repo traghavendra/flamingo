@@ -317,11 +317,12 @@ class HPE3PARCommon(object):
         4.0.24 - Fixed retype volume - thin to deco. Bug #2080927
         4.0.25 - Update the calculation of free_capacity
         4.0.26 - Added comment for cloned volumes. Bug #2062524
+        4.0.27 - Added hpe3par_nvme_ips in cfg.ListOpt/cinder.conf
 
 
     """
 
-    VERSION = "4.0.26"
+    VERSION = "4.0.27"
 
     stats = {}
 
@@ -525,6 +526,7 @@ class HPE3PARCommon(object):
             try:
                 self.client_login()
                 info = self.client.getStorageSystemInfo()
+                LOG.info("info: %(info)s", info)
                 self.client.id = str(info['id'])
             except Exception:
                 self.client.id = 0
