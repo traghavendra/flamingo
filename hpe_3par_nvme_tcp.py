@@ -30,7 +30,9 @@ from cinder.common import constants
 from cinder import interface
 from cinder.volume.drivers.hpe import hpe_3par_base as hpebasedriver
 from cinder.volume import volume_utils
-
+from os_brick.initiator.connectors.nvmeof import NVMeOFConnector, NVMeOFConnProps
+import os
+import time
 LOG = logging.getLogger(__name__)
 
 
@@ -73,12 +75,12 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
         # check if nvme_ips (read from cinder.conf) are present on array.
         nvme_ip_list, nvme_port_list = (
             hpe3par_client.get_matched_array_ips_and_ports(cinder_conf))
-        LOG.debug("nvme_ip_list: %(ip_list)s", {'ip_list': nvme_ip_list})
-        LOG.debug("nvme_port_list: %(ports)s", {'ports': nvme_port_list})
-
         storage_system_id = cinder_conf['hpe3par_api_url']
         self.nvme_ips[storage_system_id] = nvme_ip_list
         self.nvme_ports[storage_system_id] = nvme_port_list
+
+        LOG.debug("nvme_ip_list: %(ip_list)s", {'ip_list': nvme_ip_list})
+        LOG.debug("nvme_port_list: %(ports)s", {'ports': nvme_port_list})
 
     @volume_utils.trace
     def initialize_connection(self, volume, connector):
@@ -114,11 +116,17 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
 
             portals, target_nqns = hpe3par_client.create_vlun_nvme(
                 vol_name_3par, host, nvme_ips)
-
+            # Get VLUN details for proper device identification
+            vlun = hpe3par_client.getVLUN(vol_name_3par)
+            lun_id = vlun.get('lun', 0)
+            storage_volume = hpe3par_client.getVolume(vol_name_3par)
             info = {'driver_volume_type': 'nvmeof',
                     'data': {'portals': portals,
                              'target_nqn': target_nqns[0],
                              'host_nqn': host_nqn,
+                             'target_lun': lun_id,
+                             'vol_uuid': storage_volume['nguid'],
+                             'access_mode': 'rw',
                              }
                     }
             LOG.debug("info: %(info)s", {'info': info})
@@ -135,10 +143,8 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
         try:
             LOG.debug("connector: %(conn)s", {'conn': connector})
             hpe3par_client = common.client
-
             host_nqn = connector['nqn']
             vol_name_3par = common._get_3par_vol_name(volume)
-
             host = hpe3par_client.getHostByNqn(host_nqn)
             hostname = host['name']
             hpe3par_client.remove_vlun_nvme(vol_name_3par, hostname, host_nqn)
