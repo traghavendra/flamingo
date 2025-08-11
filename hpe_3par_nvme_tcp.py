@@ -1,8 +1,6 @@
 #    (c) Copyright 2025 Hewlett Packard Enterprise Development LP
 #    All Rights Reserved.
 #
-#    Copyright 2012 OpenStack Foundation
-#
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
 #    a copy of the License at
@@ -32,7 +30,9 @@ from cinder.common import constants
 from cinder import interface
 from cinder.volume.drivers.hpe import hpe_3par_base as hpebasedriver
 from cinder.volume import volume_utils
-
+from os_brick.initiator.connectors.nvmeof import NVMeOFConnector, NVMeOFConnProps
+import os
+import time
 LOG = logging.getLogger(__name__)
 
 
@@ -55,53 +55,39 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
 
     def __init__(self, *args, **kwargs):
         super(HPE3PARNVMETCPDriver, self).__init__(*args, **kwargs)
-        # self.lookup_service = fczm_utils.create_lookup_service()
         self.protocol = constants.NVMEOF_TCP
 
     def _do_setup(self, common):
         self.nvme_ips = {}
-        self.nvme_ports = []
+        self.nvme_ports = {}
         common.client_login()
         try:
-            self.get_nvme_ips_and_ports(common)
+            self.initialize_nvme_ips_and_ports(common)
         finally:
             self._logout(common)
 
-    def get_nvme_ips_and_ports(self, common):
-        # map nvme_ip-> ip_port
+    def initialize_nvme_ips_and_ports(self, common):
+        # map nvme_ip -> ip_port
         #             -> nsp
-        nvme_ip_list = {}
-        temp_nvme_ip = {}
+        cinder_conf = common._client_conf
+        hpe3par_client = common.client
 
-        backend_conf = common._client_conf
-        client_obj = common.client
-
-        conf_ips = backend_conf['hpe3par_nvme_ips']
-        self.nvme_ports = client_obj.match_conf_ips_with_array(
-            conf_ips, temp_nvme_ip, nvme_ip_list)
-        LOG.debug("nvme_ports: %(ports)s", {'ports': self.nvme_ports})
-
-        # lets see if there are invalid nvme IPs left in the temp dict
-        if len(temp_nvme_ip) > 0:
-            LOG.warning("Found invalid nvme IP address(s) in "
-                        "configuration option(s) hpe3par_nvme_ips '%s.'",
-                        (", ".join(temp_nvme_ip)))
-
-        if not len(nvme_ip_list):
-            msg = _('At least one valid nvme IP address must be set.')
-            LOG.error(msg)
-            raise exception.InvalidInput(reason=msg)
+        # check if nvme_ips (read from cinder.conf) are present on array.
+        nvme_ip_list, nvme_port_list = (
+            hpe3par_client.get_matched_array_ips_and_ports(cinder_conf))
+        storage_system_id = cinder_conf['hpe3par_api_url']
+        self.nvme_ips[storage_system_id] = nvme_ip_list
+        self.nvme_ports[storage_system_id] = nvme_port_list
 
         LOG.debug("nvme_ip_list: %(ip_list)s", {'ip_list': nvme_ip_list})
-        self.nvme_ips[common._client_conf['hpe3par_api_url']] = (
-            nvme_ip_list)
+        LOG.debug("nvme_port_list: %(ports)s", {'ports': nvme_port_list})
 
     @volume_utils.trace
     def initialize_connection(self, volume, connector):
         """Assigns the volume to a server.
 
         Steps to export a volume on array:
-          * Create a host on the array with the target nqn
+          * Ensure that host is present on array
           * Create a VLUN with the volume we want to export.
 
         """
@@ -109,29 +95,38 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
         common = self._login()
 
         try:
-            LOG.debug("connector: %(connector)s", {'connector': connector})
-            host = self._create_host(common, volume, connector)
-
-            # Grab the nvme ip details from cinder.conf
-            nvme_ips = self.nvme_ips[common._client_conf['hpe3par_api_url']]
-
-            multipath = connector.get('multipath')
-
+            LOG.debug("connector: %(conn)s", {'conn': connector})
+            hpe3par_client = common.client
             host_nqn = connector['nqn']
-            client_obj = common.client
 
-            portals = []
-            target_nqns = []
+            # pre-requisite: host should be already created on array
+            host = hpe3par_client.getHostByNqn(host_nqn)
+            LOG.debug("host: %(host)s", {'host': host})
+            if not host:
+                hostname = connector['host']
+                LOG.error("Host with nqn %(nqn)s not found. "
+                          "Please create new host with name %(name)s and "
+                          "nqn %(nqn)s", {'name': hostname, 'nqn': host_nqn})
+                raise hpeexceptions.HTTPNotFound(
+                    "Host not found with nqn: %s" % host_nqn)
+            storage_system_id = common._client_conf['hpe3par_api_url']
+            nvme_ips = self.nvme_ips[storage_system_id]
 
-            self._create_vlun(
-                volume, common, host,
-                nvme_ips, self.nvme_ports, multipath,
-                portals, target_nqns)
+            vol_name_3par = common._get_3par_vol_name(volume)
 
+            portals, target_nqns = hpe3par_client.create_vlun_nvme(
+                vol_name_3par, host, nvme_ips)
+            # Get VLUN details for proper device identification
+            vlun = hpe3par_client.getVLUN(vol_name_3par)
+            lun_id = vlun.get('lun', 0)
+            storage_volume = hpe3par_client.getVolume(vol_name_3par)
             info = {'driver_volume_type': 'nvmeof',
                     'data': {'portals': portals,
                              'target_nqn': target_nqns[0],
                              'host_nqn': host_nqn,
+                             'target_lun': lun_id,
+                             'vol_uuid': storage_volume['nguid'],
+                             'access_mode': 'rw',
                              }
                     }
             LOG.debug("info: %(info)s", {'info': info})
@@ -139,81 +134,20 @@ class HPE3PARNVMETCPDriver(hpebasedriver.HPE3PARDriverBase):
         finally:
             self._logout(common)
 
-    def _create_host(self, common, volume, connector):
-        """Check whether host exists with same hostname
+    @volume_utils.trace
+    def terminate_connection(self, volume, connector, **kwargs):
 
-           if found return host
-           else create new host
+        LOG.debug("volume id: %(id)s", {'id': volume['id']})
+        common = self._login()
 
-        """
-        host = None
-        domain = None
-        hostname = common._safe_hostname(connector, self.configuration)
-        cpg = common.get_cpg(volume, allowSnap=True)
-        domain = common.get_domain(cpg)
-
-        client_obj = common.client
-        nqn = connector['nqn']
         try:
-            host = client_obj.getHost(hostname)
-            LOG.debug("host is present")
-            return host
-        except hpeexceptions.HTTPNotFound:
-            LOG.debug("host doesn't exist. Creating host")
-            try:
-                client_obj.createHost(hostname, nqn=nqn,
-                                      optional={'domain': domain})
-            except Exception as ex:
-                LOG.error("Exception occurred: %(ex)s", {'ex': str(ex)})
-                raise
+            LOG.debug("connector: %(conn)s", {'conn': connector})
+            hpe3par_client = common.client
+            host_nqn = connector['nqn']
+            vol_name_3par = common._get_3par_vol_name(volume)
+            host = hpe3par_client.getHostByNqn(host_nqn)
+            hostname = host['name']
+            hpe3par_client.remove_vlun_nvme(vol_name_3par, hostname, host_nqn)
 
-            host = client_obj.getHost(hostname)
-            return host
-        except Exception as ex:
-            LOG.error("Exception occurred: %(ex)s", {'ex': str(ex)})
-            raise
-
-    def _create_vlun(self, volume, common, host,
-                     nvme_ips, ready_ports, multipath,
-                     target_portals, target_nqns):
-
-        # Target portal ips are defined in cinder.conf.
-        target_portal_ips = list(nvme_ips.keys())
-        cinder_conf_ips = []
-        if multipath:
-            # consider all ips
-            cinder_conf_ips = target_portal_ips
-        else:
-            # consider only the first ip
-            cinder_conf_ips.append(target_portal_ips[0])
-
-        client_obj = common.client
-        vol_name_3par = common._get_3par_vol_name(volume)
-
-        # Collect all existing VLUNs for this volume/host combination.
-        existing_vluns = client_obj.find_existing_vluns(vol_name_3par, host)
-        LOG.debug("existing_vluns: %(ev)s", {'ev': existing_vluns})
-
-        # Cycle through each ready nvme port and determine if a new
-        # VLUN should be created or an existing one used.
-        lun_id = None
-        for port in ready_ports:
-            nvme_ip = port['nodeWWN']
-            if nvme_ip in cinder_conf_ips:
-                port_nqn = ''
-
-                ret_vals = client_obj.create_vlun_nvme(lun_id, vol_name_3par, host,
-                    existing_vluns, nvme_ip, nvme_ips)
-                lun_id = ret_vals[0]
-                port_nqn = ret_vals[1]
-
-                target_portals.append(
-                    (nvme_ip, nvme_ips[nvme_ip]['ip_port'], 'tcp') 
-                    )
-                target_nqns.append(port_nqn)
-                # target_luns.append(lun_id)
-            else:
-                LOG.debug("nvme IP: '%s' was not found in "
-                          "hpe3par_nvme_ips list defined in "
-                          "cinder.conf.", nvme_ip)
-
+        finally:
+            self._logout(common)
